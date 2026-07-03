@@ -1,7 +1,3 @@
-function! s:WaitForCommandRequestComplete()
-  return youcompleteme#test#commands#WaitForCommandRequestComplete()
-endfunction
-
 function! s:CheckNoCommandRequest()
   return youcompleteme#test#commands#CheckNoCommandRequest()
 endfunction
@@ -19,7 +15,7 @@ function! s:CheckPopupVisibleScreenPos( loc, text, syntax )
   " has 'text' (a list of lines) and 'syntax' the &syntax setting
   " popup found at that location
   redraw
-  call s:WaitForCommandRequestComplete()
+  call s:CheckNoCommandRequest()
   call WaitForAssert( { ->
         \   assert_notequal( 0,
         \                    popup_locate( a:loc.row, a:loc.col ),
@@ -37,25 +33,21 @@ function! s:CheckPopupVisibleScreenPos( loc, text, syntax )
   call assert_equal( a:syntax, getbufvar( winbufnr( popup ), '&syntax' ) )
 endfunction
 
-function! s:CheckPopupNotVisible( row, col, with_request=v:true )
+function! s:CheckPopupNotVisible( row, col )
   " Takes a buffer position and ensures there is no popup visible at that
   " position. Like CheckPopupVisible, the position must be valid (i.e. there
   " must be buffer text at that position). Otherwise, you need to pass the
   " _screen_ position to CheckPopupNotVisibleScreenPos
   redraw
   let loc = screenpos( win_getid(), a:row, a:col )
-  return s:CheckPopupNotVisibleScreenPos( loc, a:with_request )
+  return s:CheckPopupNotVisibleScreenPos( loc )
 endfunction
 
-function! s:CheckPopupNotVisibleScreenPos( loc, with_request=v:true )
+function! s:CheckPopupNotVisibleScreenPos( loc )
   " Takes a position dict like the one returned by screenpos() and verifies it
   " does not have a popup drawn on it.
   redraw
-  if a:with_request
-    call s:WaitForCommandRequestComplete()
-  else
-    call s:CheckNoCommandRequest()
-  endif
+  call s:CheckNoCommandRequest()
   call WaitForAssert( { ->
         \   assert_equal( 0,
         \                 popup_locate( a:loc.row, a:loc.col ) )
@@ -71,7 +63,7 @@ let s:cpp_lifetime = {
       \             '',
       \             'Type: char',
       \             'Offset: 16 bytes',
-      \             'Size: 1 byte (+7 padding)',
+      \             'Size: 1 byte (+7 bytes padding), alignment 1 byte',
       \             'nobody will live > 128 years',
       \             '',
       \             '// In PointInTime',
@@ -83,6 +75,8 @@ function! SetUp()
   let g:ycm_use_clangd = 1
   let g:ycm_keep_logfiles = 1
   let g:ycm_log_level = 'DEBUG'
+  let g:ycm_enable_semantic_highlighting = 1
+
   set signcolumn=no
   nmap <leader>D <Plug>(YCMHover)
   call youcompleteme#test#setup#SetUp()
@@ -156,7 +150,7 @@ EOPYTHON
 
   call setpos( '.', [ 0, 12, 3 ] )
   normal \D
-  call s:CheckPopupNotVisible( 11, 4, v:false )
+  call s:CheckPopupNotVisible( 11, 4 )
 
   call popup_clear()
 endfunction
@@ -174,8 +168,8 @@ EOPYTHON
 
   call assert_equal( { 'command': 'GetType', 'syntax': 'python' }, b:ycm_hover )
 
-  call s:CheckPopupNotVisible( 2, 1, v:none )
-  call s:CheckPopupNotVisible( 2, 2, v:none )
+  call s:CheckPopupNotVisible( 2, 1 )
+  call s:CheckPopupNotVisible( 2, 2 )
 
   " some doc - autocommand
   call setpos( '.', [ 0, 12, 3 ] )
@@ -245,7 +239,7 @@ function! Test_AutoHover_Disabled()
 
   call setpos( '.', [ 0, 12, 3 ] )
   silent! doautocmd CursorHold
-  call s:CheckPopupNotVisible( 11, 4, v:false )
+  call s:CheckPopupNotVisible( 11, 4 )
   call assert_equal( messages_before, execute( 'messages' ) )
 
   " Manual hover is still supported
@@ -256,7 +250,7 @@ function! Test_AutoHover_Disabled()
 
   " Manual close hover is still supported
   normal \D
-  call s:CheckPopupNotVisible( 11, 4, v:false )
+  call s:CheckPopupNotVisible( 11, 4 )
   call assert_equal( messages_before, execute( 'messages' ) )
 
   call popup_clear()
@@ -309,11 +303,11 @@ function! Test_Hover_Dismiss()
 
   " Dismiss
   normal \D
-  call s:CheckPopupNotVisible( 11, 3, v:false )
+  call s:CheckPopupNotVisible( 11, 3 )
 
   " Make sure it doesn't come back
   silent! doautocmd CursorHold
-  call s:CheckPopupNotVisible( 11, 3, v:false )
+  call s:CheckPopupNotVisible( 11, 3 )
 
   " Move the cursor (again this is tricky). I couldn't find any tests in vim's
   " own code that trigger CursorMoved, so we just cheat. (for the record, just
@@ -349,7 +343,7 @@ function! Test_Hover_Custom_Syntax()
                                    \ 'cpp' )
 
   normal \D
-  call s:CheckPopupNotVisibleScreenPos( { 'row': 7, 'col': 9 }, v:false )
+  call s:CheckPopupNotVisibleScreenPos( { 'row': 7, 'col': 9 } )
 
   call popup_clear()
 endfunction
@@ -387,6 +381,53 @@ function! TearDown_Test_Hover_Custom_Command()
   silent! au! MyYCMCustom
 endfunction
 
+function! SetUp_Test_Hover_Custom_Popup()
+  augroup MyYCMCustom
+    autocmd!
+    autocmd FileType cpp let b:ycm_hover = {
+      \ 'command': 'GetDoc',
+      \ 'syntax': 'cpp',
+      \ 'popup_params': {
+      \     'maxwidth': 10,
+      \   }
+      \ }
+  augroup END
+endfunction
+
+function! Test_Hover_Custom_Popup()
+  call youcompleteme#test#setup#OpenFile( '/test/testdata/cpp/completion.cc',
+                                        \ {} )
+  call assert_equal( 'cpp', &filetype )
+  call assert_equal( {
+                   \   'command': 'GetDoc',
+                   \   'syntax': 'cpp',
+                   \   'popup_params': { 'maxwidth': 10 }
+                   \ }, b:ycm_hover )
+
+  call setpos( '.', [ 0, 6, 8 ] )
+  doautocmd CursorHold
+  call assert_equal( {
+                   \   'command': 'GetDoc',
+                   \   'syntax': 'cpp',
+                   \   'popup_params': { 'maxwidth': 10 }
+                   \ }, b:ycm_hover )
+
+  call s:CheckPopupVisibleScreenPos( { 'row': 7, 'col': 9 },
+                                   \ s:cpp_lifetime.GetDoc,
+                                   \ 'cpp' )
+  " Check that popup's width is limited by maxwidth being passed
+  call s:CheckPopupNotVisibleScreenPos( { 'row': 7, 'col': 20 } )
+
+  normal \D
+  call s:CheckPopupNotVisibleScreenPos( { 'row': 7, 'col': 9 } )
+
+  call popup_clear()
+endfunction
+
+function! TearDown_Test_Hover_Custom_Popup()
+  silent! au! MyYCMCustom
+endfunction
+
 function! Test_Long_Single_Line()
   call youcompleteme#test#setup#OpenFile( '/test/testdata/python/doc.py', {} )
   call cursor( [ 37, 3 ] )
@@ -397,8 +438,8 @@ function! Test_Long_Single_Line()
   call s:CheckPopupVisible( 36, 1, v:none, '' )
   call s:CheckPopupVisible( 36, &columns, v:none, '' )
 
-  call s:CheckPopupNotVisible( 37, 1, v:false )
-  call s:CheckPopupNotVisible( 37, &columns, v:false )
+  call s:CheckPopupNotVisible( 37, 1 )
+  call s:CheckPopupNotVisible( 37, &columns )
 
   " Also wrap is ON so it should cover at least 2 lines + 2 for the header/empty
   " line
@@ -420,16 +461,16 @@ function! Test_Long_Wrapped()
   call s:CheckPopupVisible( 37, 1, v:none, '' )
   call s:CheckPopupVisible( 37, &columns, v:none, '' )
 
-  call s:CheckPopupNotVisible( 38, 1, v:false )
-  call s:CheckPopupNotVisible( 38, &columns, v:false )
+  call s:CheckPopupNotVisible( 38, 1 )
+  call s:CheckPopupNotVisible( 38, &columns )
 
   " Also, wrap is off, so it should be _exactly_ 9 lines + 2 for the signature
   " and the empty line
   call s:CheckPopupVisible( 27, 1, v:none, '' )
   call s:CheckPopupVisible( 27, &columns, v:none, '' )
 
-  call s:CheckPopupNotVisible( 26, 1, v:false )
-  call s:CheckPopupNotVisible( 26, &columns, v:false )
+  call s:CheckPopupNotVisible( 26, 1 )
+  call s:CheckPopupNotVisible( 26, &columns )
 
   call popup_clear()
 endfunction
